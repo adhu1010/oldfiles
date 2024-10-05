@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Path Finding Visualization</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+        }
+        #canvas {
+            border: 1px solid black;
+        }
+        #controls {
+            margin-top: 20px;
+        }
+        #controls button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>Path Finding Visualization</h1>
+    <canvas id="canvas" width="800" height="800"></canvas>
+    <div id="controls">
+        <button id="startButton">Start Path Finding</button>
+        <button id="restartButton">Restart</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const gridSize = 50;  // Size of each cell in pixels
+        const rows = Math.floor(canvas.height / gridSize);
+        const cols = Math.floor(canvas.width / gridSize);
+
+        let staticObstacles = [{x: 3, y: 2}, {x: 4, y: 2}, {x: 5, y: 2}];
+        let dynamicObstacles = [{x: 1, y: 5}, {x: 2, y: 6}];
+        const start = {x: 0, y: 0};
+        const goal = {x: 7, y: 7};
+        let path = [];
+        let current_position = {x: 0, y: 0};
+        let interval;
+
+        // Load images
+        const images = {
+            garden: new Image(),
+            dog: new Image(),
+            cat: new Image(),
+            person: new Image(),
+            shop: new Image(),
+            home: new Image(),
+            tree: new Image()
+        };
+
+        images.garden.src = 'images/garden.png';
+        images.dog.src = 'images/dog.png';
+        images.cat.src = 'images/cat.png';
+        images.person.src = 'images/person.png';
+        images.shop.src = 'images/shop.png';
+        images.home.src = 'images/home.png';
+        images.tree.src = 'images/tree.png';
+
+        // Draw the grid
+        function drawGrid() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(images.garden, 0, 0, canvas.width, canvas.height);
+
+            // Draw static obstacles
+            staticObstacles.forEach(obstacle => {
+                ctx.drawImage(images.tree, obstacle.x * gridSize, obstacle.y * gridSize, gridSize, gridSize);
+            });
+
+            // Draw dynamic obstacles
+            dynamicObstacles.forEach(obstacle => {
+                ctx.drawImage(images.dog, obstacle.x * gridSize, obstacle.y * gridSize, gridSize, gridSize);
+            });
+
+            // Draw start and goal nodes
+            ctx.drawImage(images.shop, start.x * gridSize, start.y * gridSize, gridSize, gridSize);
+            ctx.drawImage(images.home, goal.x * gridSize, goal.y * gridSize, gridSize, gridSize);
+
+            // Draw path
+            ctx.strokeStyle = 'blue';
+            ctx.lineWidth = 5;
+            if (path.length > 0) {
+                ctx.beginPath();
+                ctx.moveTo(path[0].x * gridSize + gridSize / 2, path[0].y * gridSize + gridSize / 2);
+                path.forEach(step => {
+                    ctx.lineTo(step.x * gridSize + gridSize / 2, step.y * gridSize + gridSize / 2);
+                });
+                ctx.stroke();
+            }
+        }
+
+        // Function to update dynamic obstacles
+        async function updateObstacles(static_obstacles, dynamic_obstacles, robotPosition) {
+            const newDynamicObstacles = [];
+
+            dynamic_obstacles.forEach(obstacle => {
+                let new_position;
+                let valid_position_found = false;
+
+                // Try to move the obstacle to a valid, unoccupied position
+                while (!valid_position_found) {
+                    // Generate a random direction: up, down, left, right
+                    const direction = Math.floor(Math.random() * 4);
+                    let delta = [0, 0];
+
+                    if (direction === 0) delta = [-1, 0];  // Move up
+                    if (direction === 1) delta = [1, 0];   // Move down
+                    if (direction === 2) delta = [0, -1];  // Move left
+                    if (direction === 3) delta = [0, 1];   // Move right
+
+                    // Calculate the new position
+                    new_position = [obstacle.x + delta[0], obstacle.y + delta[1]];
+
+                    // Check if the new position is within grid bounds
+                    if (
+                        new_position[0] >= 0 && new_position[0] < rows &&
+                        new_position[1] >= 0 && new_position[1] < cols &&
+                        !static_obstacles.some(ob => ob.x === new_position[0] && ob.y === new_position[1]) &&  // Check static obstacles
+                        !newDynamicObstacles.some(ob => ob.x === new_position[0] && ob.y === new_position[1]) &&  // Check other dynamic obstacles
+                        (robotPosition.x !== new_position[0] || robotPosition.y !== new_position[1])  // Check robot position
+                    ) {
+                        valid_position_found = true;
+                    }
+                }
+
+                newDynamicObstacles.push({x: new_position[0], y: new_position[1]});
+            });
+
+            return newDynamicObstacles;
+        }
+
+        // Main function for dynamic pathfinding
+        function startPathfinding() {
+            stopInterval();  // Stop any previous interval if active
+
+            interval = setInterval(async function() {
+                if (current_position.x === goal.x && current_position.y === goal.y) {
+                    clearInterval(interval); // Stop when the robot reaches the goal
+                    alert("Goal reached!");
+                    document.getElementById('startButton').disabled = false;
+                    document.getElementById('restartButton').disabled = false;
+                    return;
+                }
+
+                // Move dynamic obstacles, ensuring no overlap
+                dynamicObstacles = await updateObstacles(staticObstacles, dynamicObstacles, current_position);
+
+                // Check if the next step in the path is blocked by a dynamic obstacle
+                if (path.length > 0) {
+                    const next_step = path[0]; // Next step in the current path
+
+                    if (dynamicObstacles.some(obstacle => obstacle.x === next_step.x && obstacle.y === next_step.y)) {
+                        // If blocked, re-plan the path
+                        path = await getPath(current_position, goal, staticObstacles, dynamicObstacles);
+
+                        // If no valid path, stop
+                        if (!path || path.length === 0) {
+                            clearInterval(interval);
+                            alert("Path blocked, no valid path found!");
+                            document.getElementById('startButton').disabled = false;
+                            document.getElementById('restartButton').disabled = false;
+                            return;
+                        }
+                    } else {
+                        // If not blocked, move the robot to the next step
+                        current_position = path.shift();
+                    }
+                }
+
+                // Update the grid with new positions
+                drawGrid();
+
+            }, 1000); // Update every second
+        }
+
+        function stopInterval() {
+            if (interval) {
+                clearInterval(interval);
+            }
+        }
+
+        function restartPathfinding() {
+            stopInterval(); // Stop any active pathfinding
+            current_position = {x: 0, y: 0};
+            path = [];
+            dynamicObstacles = [{x: 1, y: 5}, {x: 2, y: 6}]; // Reset dynamic obstacles
+            drawGrid();
+        }
+
+        function getPath(start, goal, static_obstacles, dynamic_obstacles) {
+            // Placeholder for pathfinding function
+            // Replace with actual A* pathfinding logic
+            return [{x: 0, y: 0}, {x: 1, y: 1}, {x: 2, y: 2}, {x: 3, y: 3}, {x: 4, y: 4}, {x: 5, y: 5}, {x: 6, y: 6}, {x: 7, y: 7}];
+        }
+
+        // Event Listeners
+        document.getElementById('startButton').addEventListener('click', function() {
+            this.disabled = true;
+            document.getElementById('restartButton').disabled = true;
+            startPathfinding();
+        });
+
+        document.getElementById('restartButton').addEventListener('click', restartPathfinding);
+
+        // Initial Draw
+        drawGrid();
+    </script>
+</body>
+</html>
